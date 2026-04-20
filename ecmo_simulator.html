@@ -1,0 +1,1926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CardioHelp ECMO Simulator</title>
+  <style>
+    /* ============================================================
+       RESET & BASE
+    ============================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; font-family: Arial, sans-serif; background: #f5f5f5; overflow-x: hidden; }
+    button { font-family: inherit; cursor: pointer; }
+    input[type=range] { width: 100%; cursor: pointer; accent-color: #2196f3; }
+    select { font-family: inherit; }
+
+    /* ============================================================
+       VIEWS — only one visible at a time
+    ============================================================ */
+    .view { display: none; width: 100%; min-height: 100vh; }
+    .view.active { display: flex; flex-direction: column; }
+    #view-display.active  { background: #4a5f6d; }
+    #view-monitor.active  { background: #0a0a0a; height: 100vh; overflow: hidden; }
+    #view-control.active  { background: #f5f5f5; padding: 20px; }
+    #view-split.active    { flex-direction: row; background: #f0f0f0; height: 100vh; overflow: hidden; }
+    #view-test.active     { background: #1a1a1a; height: 100vh; overflow: hidden; padding: 10px; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; }
+
+    /* ============================================================
+       NAV BAR (top bar present on display view)
+    ============================================================ */
+    .nav-bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+      background: rgba(0,0,0,0.75); display: flex; gap: 8px; padding: 8px 14px; align-items: center; flex-wrap: wrap;
+    }
+    .nav-bar span { color: #aaa; font-size: 12px; margin-right: 4px; }
+    .nav-btn {
+      padding: 7px 13px; border: none; border-radius: 4px; font-weight: bold; font-size: 12px;
+      transition: opacity .15s;
+    }
+    .nav-btn:hover { opacity: .85; }
+    .btn-display  { background: #00d9ff; color: #0f3460; }
+    .btn-control  { background: #e8d154; color: #333; }
+    .btn-monitor  { background: #e91e63; color: #fff; }
+    .btn-test     { background: #ff9800; color: #fff; }
+    .btn-split    { background: #9c27b0; color: #fff; }
+    .btn-green    { background: #4caf50; color: #fff; }
+    .btn-red      { background: #f44336; color: #fff; }
+    .btn-blue     { background: #2196f3; color: #fff; }
+
+    /* ============================================================
+       DISPLAY VIEW  — ECMO Pump Screen
+    ============================================================ */
+    #display-screen {
+      width: 100%; flex: 1; display: flex; flex-direction: column;
+      font-family: Arial, sans-serif;
+    }
+    .display-brand {
+      background: #5a6f7d; padding: 12px 20px; text-align: center;
+      border-bottom: 2px solid #3a4f5d;
+    }
+    .display-brand h1 { font-size: 28px; font-weight: bold; color: #8a9fad; letter-spacing: 4px; }
+
+    .alarm-banner {
+      padding: 10px 20px; display: flex; justify-content: space-between;
+      align-items: center; border-bottom: 2px solid #999; transition: background .3s;
+    }
+    .alarm-banner.active-alarm { background: #e8d154; animation: alarmPulse 1s infinite; }
+    .alarm-banner.no-alarm     { background: #d0d0d0; }
+    .alarm-icon { font-size: 18px; color: #c44; }
+    .alarm-text { font-size: 15px; color: #444; font-weight: bold; }
+    .alarm-time { font-size: 13px; color: #666; }
+    @keyframes alarmPulse { 0%,100%{opacity:1} 50%{opacity:.7} }
+
+    .display-main { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 15px; }
+
+    /* Top row: FLOW big + RPM + right icons */
+    .display-top {
+      display: grid; grid-template-columns: 1fr 1fr 120px; gap: 15px; height: 160px;
+    }
+    /* Middle row: PVen + PArt + bell */
+    .display-mid {
+      display: grid; grid-template-columns: 1fr 1fr 120px; gap: 15px; height: 140px;
+    }
+    /* Bottom row: PInt + SvO2 + Sweep + FdO2 + plug */
+    .display-bot {
+      display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 120px; gap: 15px; height: 140px;
+    }
+
+    .param-cell {
+      background: #fff; border: 3px solid #999; border-radius: 8px;
+      padding: 15px; display: flex; flex-direction: column; position: relative;
+    }
+    .param-cell.warn { background: #e8d154; }
+    .param-label {
+      position: absolute; top: 15px; left: 15px;
+      border: 3px solid #999; border-radius: 18px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: bold; color: #666; background: #f5f5f5;
+      padding: 2px 6px; min-width: 45px; height: 35px;
+    }
+    .param-label.warn { background: #e8d154; }
+    .param-unit { font-size: 16px; color: #999; text-align: right; margin-bottom: 5px; align-self: flex-end; }
+    .param-value {
+      font-size: 72px; font-weight: bold; color: #0066cc;
+      font-family: monospace; text-align: right; line-height: 1; margin-top: auto;
+    }
+    .param-value.warn { color: #d4b644; }
+    .param-value.small { font-size: 48px; }
+    .param-value.xs    { font-size: 36px; }
+
+    .icon-cell {
+      background: #6fa3d0; border: 2px solid #999; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center; font-size: 28px; color: #fff;
+    }
+    .icon-cell.alarm-active { background: #e74c3c; }
+    .icon-cell.white { background: #fff; font-size: 32px; }
+
+    .display-bottom-bar {
+      background: #3a4f5d; padding: 10px 20px;
+      display: flex; justify-content: space-between; align-items: center;
+      border-top: 2px solid #2a3f4d;
+    }
+    .bottom-btns { display: flex; gap: 8px; }
+    .bottom-key {
+      width: 38px; height: 38px; border-radius: 4px;
+    }
+    .key-yellow { background: #e8d154; }
+    .key-blue   { background: #0066cc; }
+
+    /* Student controls panel (unlocked) */
+    #student-controls {
+      background: linear-gradient(to bottom, #2e7d32, #1b5e20);
+      border-top: 4px solid #4caf50; padding: 20px;
+    }
+    .student-title {
+      color: #fff; font-size: 20px; font-weight: bold; margin-bottom: 15px;
+      text-align: center; letter-spacing: 2px;
+    }
+    .student-grid {
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; max-width: 1200px; margin: 0 auto;
+    }
+    .student-card {
+      background: rgba(255,255,255,.15); border-radius: 12px; padding: 15px;
+      border: 2px solid rgba(255,255,255,.3);
+    }
+    .student-card.primary { border: 3px solid #ff9800; }
+    .student-card-title { color: #fff; font-size: 14px; margin-bottom: 10px; text-align: center; font-weight: bold; }
+    .student-value-box {
+      background: rgba(33,150,243,.3); border-radius: 10px; padding: 12px;
+      margin-bottom: 8px; border: 2px solid #2196f3; text-align: center;
+    }
+    .student-value-box.rpm { background: rgba(255,152,0,.2); border-color: #ff9800; }
+    .student-big { font-size: 40px; font-weight: bold; color: #fff; font-family: monospace; line-height: 1; }
+    .student-unit { font-size: 13px; color: #fff; margin-top: 5px; }
+    .student-note { color: #fff; font-size: 10px; text-align: center; opacity: .7; font-style: italic; }
+    .adj-btn {
+      width: 60px; height: 60px; border: 3px solid #fff; border-radius: 10px;
+      font-size: 28px; font-weight: bold; color: #fff;
+      box-shadow: 0 4px 8px rgba(0,0,0,.3); transition: transform .1s;
+    }
+    .adj-btn:active { transform: scale(.95); }
+    .adj-btn.dec { background: #f44336; }
+    .adj-btn.inc { background: #4caf50; }
+    .adj-row { display: flex; gap: 8px; justify-content: center; }
+
+    /* ============================================================
+       ICU MONITOR VIEW
+    ============================================================ */
+    #monitor-header {
+      height: 75px; background: #0a0a0a; border-bottom: 3px solid #333;
+      display: flex; align-items: center; padding: 0 15px; gap: 15px; flex-wrap: wrap;
+    }
+    #monitor-alarm-bar {
+      flex: 1; height: 50px; border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: bold; font-size: 18px; letter-spacing: 2px;
+      transition: background .3s, color .3s;
+    }
+    #monitor-alarm-bar.alarm-high   { background: #c62828; color: #fff; animation: alarmPulse .5s infinite; }
+    #monitor-alarm-bar.alarm-medium { background: #e65100; color: #fff; animation: alarmPulse 1s infinite; }
+    #monitor-alarm-bar.alarm-low    { background: #f57f17; color: #fff; }
+    #monitor-alarm-bar.alarm-none   { background: #1a2a1a; color: #4caf50; }
+
+    .monitor-time {
+      font-size: 28px; font-weight: bold; color: #fff; font-family: monospace; min-width: 90px;
+    }
+    .monitor-date { font-size: 12px; color: #888; }
+
+    #waveform-area { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 4px; overflow: hidden; }
+    .wave-row {
+      flex: 1; background: #0a0a0a; border-radius: 4px; padding: 6px;
+      display: grid; grid-template-columns: 130px 1fr; gap: 8px; min-height: 70px;
+    }
+    .wave-row.border-ecg    { border: 2px solid #1a4d1a; }
+    .wave-row.border-abp    { border: 2px solid #4d1a1a; }
+    .wave-row.border-spo2   { border: 2px solid #1a3a4d; }
+    .wave-row.border-cvp    { border: 2px solid #4a1a4d; }
+    .wave-row.border-pa     { border: 2px solid #4d3a1a; }
+    .wave-row.border-resp   { border: 2px solid #4d4d1a; }
+    .wave-label-area { display: flex; flex-direction: column; justify-content: center; }
+    .wave-label { font-size: 12px; margin-bottom: 2px; }
+    .wave-num   { font-size: 40px; font-weight: bold; font-family: monospace; line-height: 1; }
+    .wave-num.small { font-size: 32px; }
+    .wave-unit  { font-size: 12px; }
+    .wave-sub   { font-size: 12px; }
+    .c-ecg  { color: #44ff44; }
+    .c-abp  { color: #ff4444; }
+    .c-spo2 { color: #44aaff; }
+    .c-cvp  { color: #9c27b0; }
+    .c-cvp2 { color: #e1bee7; }
+    .c-pa   { color: #ff9800; }
+    .c-pa2  { color: #ffb74d; }
+    .c-resp { color: #ffff44; }
+    svg.waveform { width: 100%; height: 100%; display: block; }
+
+    #monitor-footer {
+      height: 65px; background: #0a0a0a; border-top: 3px solid #333;
+      display: flex; gap: 0; align-items: stretch;
+    }
+    .smart-key {
+      flex: 1; background: #1a1a1a; color: #aaa; border: none;
+      border-right: 1px solid #333; font-weight: bold; font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s;
+    }
+    .smart-key:last-child { border-right: none; }
+    .smart-key:hover { background: #2a2a2a; }
+    .smart-key.active { background: #1a4d2e; color: #4caf50; }
+    .smart-key.cycling { background: #0a3d5f; color: #4fc3f7; }
+
+    /* ============================================================
+       CONTROL VIEW
+    ============================================================ */
+    .ctrl-container { max-width: 1200px; margin: 0 auto; }
+    .ctrl-header {
+      background: #0f3460; color: #fff; padding: 20px; border-radius: 8px;
+      margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+    }
+    .ctrl-header h1 { font-size: 22px; }
+    .ctrl-header-sub { font-size: 14px; opacity: .8; margin-top: 4px; }
+    .ctrl-header-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .ctrl-toggle-label {
+      display: flex; align-items: center; gap: 10px;
+      background: rgba(255,255,255,.1); padding: 10px 15px; border-radius: 6px; cursor: pointer;
+      font-size: 14px; color: #fff;
+    }
+    .ctrl-toggle-label.locked   { background: #c62828; }
+    .ctrl-toggle-label.unlocked { background: #2e7d32; }
+    .ctrl-toggle-label input { width: 20px; height: 20px; cursor: pointer; }
+
+    .ctrl-section {
+      background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #ddd;
+    }
+    .ctrl-section h2 { font-size: 18px; margin-bottom: 15px; }
+    .ctrl-section h3 { font-size: 16px; color: #0f3460; margin-bottom: 20px; }
+
+    .scenario-grid { display: flex; gap: 10px; flex-wrap: wrap; }
+    .scenario-btn {
+      padding: 10px 15px; background: #e3f2fd; border: 1px solid #2196f3;
+      border-radius: 6px; font-size: 14px; color: #1976d2; transition: background .15s;
+    }
+    .scenario-btn:hover { background: #bbdefb; }
+
+    .ctrl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .ctrl-4col { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; }
+
+    .param-group { margin-bottom: 20px; }
+    .param-group label { display: block; margin-bottom: 8px; font-size: 14px; font-weight: bold; }
+    .param-group .hint { font-size: 11px; color: #666; margin-top: 4px; }
+    .flow-display {
+      background: #e3f2fd; padding: 15px; border-radius: 8px; border: 3px solid #2196f3;
+      margin-bottom: 20px;
+    }
+    .flow-display .flow-num { font-size: 36px; font-weight: bold; color: #1976d2; font-family: monospace; }
+    .flow-display .flow-hint { font-size: 12px; color: #666; margin-top: 5px; font-style: italic; }
+
+    .alarm-trigger-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .alarm-trig-btn {
+      padding: 10px; background: #fff; color: #333;
+      border: 1px solid #ddd; border-radius: 6px; font-size: 13px; transition: all .15s;
+    }
+    .alarm-trig-btn.active { background: #ff3333; color: #fff; border-color: #ff3333; }
+    .alarm-trig-btn:hover  { border-color: #999; }
+
+    .active-alarm-banner {
+      background: #ffe0e0; border: 2px solid #ff3333; border-radius: 6px;
+      padding: 15px; margin-bottom: 15px; color: #c00; display: flex; align-items: center; gap: 10px;
+    }
+    .clear-btn {
+      padding: 5px 10px; background: #fff; border: 1px solid #c00;
+      border-radius: 4px; color: #c00; font-size: 12px;
+    }
+
+    .vitals-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+
+    /* ============================================================
+       SPLIT VIEW
+    ============================================================ */
+    #split-left { width: 50%; height: 100%; background: #4a5f6d; border-right: 3px solid #333; position: relative; overflow: hidden; }
+    #split-right { width: 50%; height: 100%; overflow-y: auto; background: #f5f5f5; padding: 15px; }
+    .split-preview { width: 100%; height: 100%; font-size: .7em; display: flex; flex-direction: column; }
+    .split-label {
+      position: absolute; top: 10px; left: 10px; z-index: 10;
+      background: rgba(0,0,0,.7); color: #fff; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold;
+    }
+
+    /* ============================================================
+       TEST VIEW
+    ============================================================ */
+    .test-panel {
+      border-radius: 8px; overflow: hidden; position: relative;
+    }
+    .test-label {
+      position: absolute; top: 5px; left: 5px; z-index: 10;
+      padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold;
+    }
+    .test-ecmo-display  { grid-column: 1/2; grid-row: 1/3; background: #4a5f6d; border: 3px solid #00d9ff; }
+    .test-monitor-panel { grid-column: 2/3; grid-row: 1/2; background: #0a0a0a; border: 3px solid #e91e63; }
+    .test-control-panel { grid-column: 2/3; grid-row: 2/3; background: #f5f5f5; border: 3px solid #ff9800; overflow-y: auto; padding: 12px; }
+
+    /* ============================================================
+       HELPERS
+    ============================================================ */
+    .flex-center { display: flex; align-items: center; justify-content: center; }
+    .flex-between { display: flex; align-items: center; justify-content: space-between; }
+    .mb8  { margin-bottom: 8px; }
+    .mb15 { margin-bottom: 15px; }
+    .bold { font-weight: bold; }
+
+    /* Checkbox toggle nicety */
+    input[type=checkbox] { cursor: pointer; }
+
+    /* Waveform SVG grid lines */
+    .grid-v { stroke: rgba(40,80,40,.3); stroke-width: .5; }
+    .grid-h { stroke: rgba(40,80,40,.3); stroke-width: .5; }
+
+    /* Instruction box */
+    .info-box {
+      background: #e3f2fd; border: 1px solid #2196f3; border-radius: 8px;
+      padding: 15px; font-size: 14px; margin-top: 20px;
+    }
+
+    /* Rhythm select */
+    .rhythm-select {
+      width: 100%; padding: 8px; border: 1px solid #ddd;
+      border-radius: 4px; font-size: 13px; background: #fff;
+    }
+
+    /* Toggle row for CVP/PA */
+    .toggle-row { display: flex; gap: 10px; margin-top: 15px; }
+    .toggle-btn {
+      flex: 1; padding: 8px; border: none; border-radius: 4px;
+      font-weight: bold; font-size: 12px; cursor: pointer;
+    }
+    .toggle-btn.on  { background: #4caf50; color: #fff; }
+    .toggle-btn.off { background: #ccc; color: #666; }
+
+    @media (max-width: 800px) {
+      .ctrl-grid { grid-template-columns: 1fr; }
+      .student-grid { grid-template-columns: 1fr 1fr; }
+      .display-top, .display-mid { grid-template-columns: 1fr 1fr; }
+      .display-bot { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ============================================================
+     VIEW: DISPLAY — ECMO Pump Screen
+============================================================ -->
+<div id="view-display" class="view">
+  <!-- Nav overlay -->
+  <div class="nav-bar">
+    <span>Mode:</span>
+    <button class="nav-btn btn-control" onclick="setView('control')">⚙ Control Panel</button>
+    <button class="nav-btn btn-monitor" onclick="setView('monitor')">📊 ICU Monitor</button>
+    <button class="nav-btn btn-split" onclick="setView('split')">⬛ Split View</button>
+    <button class="nav-btn btn-test" onclick="setView('test')">🧪 Test Mode</button>
+  </div>
+
+  <div id="display-screen" style="padding-top:52px">
+    <div class="display-brand"><h1>NORMAN PUMP</h1></div>
+
+    <div id="alarm-banner" class="alarm-banner no-alarm">
+      <div class="flex-center" style="gap:8px">
+        <span id="alarm-icon" class="alarm-icon" style="display:none">⚠</span>
+        <span id="alarm-text" class="alarm-text"></span>
+      </div>
+      <div class="alarm-time" id="display-time"></div>
+    </div>
+
+    <div class="display-main">
+      <!-- TOP ROW -->
+      <div class="display-top">
+        <!-- FLOW -->
+        <div class="param-cell" style="border-color:#2196f3">
+          <div class="param-unit">L/min</div>
+          <div id="d-flow" class="param-value" style="font-size:80px">4.5</div>
+          <div style="font-size:11px;color:#999;text-align:right;margin-top:4px">FLOW</div>
+        </div>
+        <!-- RPM -->
+        <div class="param-cell">
+          <div class="param-label">RPM</div>
+          <div class="param-unit"></div>
+          <div id="d-rpm" class="param-value small" style="color:#d32f2f">3200</div>
+        </div>
+        <!-- Top-right icons -->
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div class="icon-cell" style="flex:1">🏠</div>
+          <div class="icon-cell white flex-center" style="flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px;padding:6px">
+            <div style="background:#e74c3c;border-radius:2px"></div>
+            <div style="background:#3498db;border-radius:2px"></div>
+            <div style="background:#f39c12;border-radius:2px"></div>
+            <div style="background:#2ecc71;border-radius:2px"></div>
+            <div style="background:#9b59b6;border-radius:2px"></div>
+            <div style="background:#1abc9c;border-radius:2px"></div>
+            <div style="background:#e67e22;border-radius:2px"></div>
+            <div style="background:#95a5a6;border-radius:2px"></div>
+            <div style="background:#34495e;border-radius:2px"></div>
+          </div>
+          <div id="d-alarm-icon" class="icon-cell" style="flex:1;font-size:20px">✕</div>
+        </div>
+      </div>
+
+      <!-- MIDDLE ROW -->
+      <div class="display-mid">
+        <div id="d-pven-cell" class="param-cell">
+          <div id="d-pven-lbl" class="param-label">P<sub style="font-size:10px">Ven</sub></div>
+          <div class="param-unit">mmHg</div>
+          <div id="d-pven" class="param-value">-45</div>
+        </div>
+        <div class="param-cell">
+          <div class="param-label">P<sub style="font-size:10px">Art</sub></div>
+          <div class="param-unit">mmHg</div>
+          <div id="d-part" class="param-value">285</div>
+        </div>
+        <div class="icon-cell">🔔</div>
+      </div>
+
+      <!-- BOTTOM ROW -->
+      <div class="display-bot">
+        <div class="param-cell">
+          <div class="param-label">P<sub style="font-size:10px">Int</sub></div>
+          <div class="param-unit">mmHg</div>
+          <div id="d-deltap" class="param-value">55</div>
+        </div>
+        <div class="param-cell">
+          <div class="param-label">SvO<sub style="font-size:10px">2</sub></div>
+          <div class="param-unit">%</div>
+          <div id="d-svo2" class="param-value xs">68</div>
+        </div>
+        <div class="param-cell">
+          <div class="param-label" style="width:65px">Sweep</div>
+          <div class="param-unit">L/min</div>
+          <div id="d-sweep" class="param-value xs">4.0</div>
+        </div>
+        <div class="param-cell">
+          <div class="param-label" style="width:55px">FdO<sub style="font-size:10px">2</sub></div>
+          <div class="param-unit">%</div>
+          <div id="d-fdo2" class="param-value xs">100</div>
+        </div>
+        <div class="icon-cell white">🔌</div>
+      </div>
+    </div>
+
+    <!-- Student Controls (shown when unlocked) -->
+    <div id="student-controls" style="display:none">
+      <div class="student-title">🔓 STUDENT CONTROLS ACTIVE</div>
+      <div class="student-grid">
+        <!-- Flow display -->
+        <div class="student-card">
+          <div class="student-card-title">FLOW</div>
+          <div class="student-value-box">
+            <div id="s-flow" class="student-big">4.5</div>
+            <div class="student-unit">L/min</div>
+          </div>
+          <div class="student-note">Calculated</div>
+        </div>
+        <!-- RPM -->
+        <div class="student-card primary">
+          <div class="student-card-title">RPM</div>
+          <div class="student-value-box rpm">
+            <div id="s-rpm" class="student-big">3200</div>
+          </div>
+          <div class="adj-row">
+            <button class="adj-btn dec" onclick="studentAdjRpm(-100)">↓</button>
+            <button class="adj-btn inc" onclick="studentAdjRpm(100)">↑</button>
+          </div>
+        </div>
+        <!-- Inlet -->
+        <div class="student-card">
+          <div class="student-card-title">INLET PRESSURE</div>
+          <div class="student-value-box" style="border-color:#999">
+            <div id="s-inlet" class="student-big" style="font-size:32px">-45</div>
+            <div class="student-unit">mmHg</div>
+          </div>
+          <div class="student-note">Read-only (patient driven)</div>
+        </div>
+        <!-- SvO2 -->
+        <div class="student-card">
+          <div class="student-card-title">SvO2</div>
+          <div class="student-value-box" style="border-color:#999">
+            <div id="s-svo2" class="student-big">68</div>
+            <div class="student-unit">%</div>
+          </div>
+          <div class="student-note">Manual control</div>
+        </div>
+        <!-- Sweep -->
+        <div class="student-card">
+          <div class="student-card-title">SWEEP</div>
+          <div class="student-value-box" style="border-color:#999">
+            <div id="s-sweep" class="student-big">4.0</div>
+            <div class="student-unit">L/min</div>
+          </div>
+          <div class="student-note">Manual control</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="display-bottom-bar">
+      <div class="bottom-btns">
+        <div class="bottom-key key-yellow"></div>
+        <div class="bottom-key key-yellow"></div>
+        <div class="bottom-key key-yellow"></div>
+        <div class="bottom-key key-yellow"></div>
+        <div class="bottom-key key-blue"></div>
+        <div class="bottom-key key-yellow"></div>
+      </div>
+      <div class="icon-cell" style="padding:6px 14px;border-radius:4px;font-size:18px">🔋</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     VIEW: ICU MONITOR
+============================================================ -->
+<div id="view-monitor" class="view" style="flex-direction:column">
+  <div id="monitor-header">
+    <div>
+      <div class="monitor-time" id="monitor-clock">00:00:00</div>
+      <div class="monitor-date" id="monitor-date"></div>
+    </div>
+    <div id="monitor-alarm-bar" class="alarm-none">NO ALARMS</div>
+    <button class="nav-btn btn-display" onclick="setView('display')">ECMO Display</button>
+    <button class="nav-btn btn-control" onclick="setView('control')">Control Panel</button>
+  </div>
+
+  <div id="waveform-area">
+    <!-- ECG -->
+    <div class="wave-row border-ecg">
+      <div class="wave-label-area">
+        <div class="wave-label c-ecg">ECG</div>
+        <div id="m-hr" class="wave-num c-ecg">85</div>
+        <div class="wave-unit c-ecg">bpm</div>
+      </div>
+      <svg class="waveform" viewBox="0 0 600 80" preserveAspectRatio="none">
+        <g id="ecg-grid"></g>
+        <polyline id="ecg-wave" fill="none" stroke="#44ff44" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+      </svg>
+    </div>
+    <!-- ABP -->
+    <div class="wave-row border-abp">
+      <div class="wave-label-area">
+        <div class="wave-label c-abp">ABP</div>
+        <div id="m-bp" class="wave-num small c-abp">118/72</div>
+        <div id="m-map" class="wave-sub c-abp">(75)</div>
+      </div>
+      <svg class="waveform" viewBox="0 0 600 80" preserveAspectRatio="none">
+        <g id="abp-grid"></g>
+        <polyline id="abp-wave" fill="none" stroke="#ff4444" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+      </svg>
+    </div>
+    <!-- SpO2 -->
+    <div class="wave-row border-spo2">
+      <div class="wave-label-area">
+        <div class="wave-label c-spo2">SpO₂</div>
+        <div id="m-spo2" class="wave-num c-spo2">96</div>
+        <div class="wave-unit c-spo2">%</div>
+      </div>
+      <svg class="waveform" viewBox="0 0 600 80" preserveAspectRatio="none">
+        <g id="spo2-grid"></g>
+        <polyline id="spo2-wave" fill="none" stroke="#44aaff" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+      </svg>
+    </div>
+    <!-- CVP -->
+    <div id="cvp-row" class="wave-row border-cvp">
+      <div class="wave-label-area">
+        <div class="wave-label c-cvp">CVP</div>
+        <div id="m-cvp" class="wave-num c-cvp2">8</div>
+        <div class="wave-unit c-cvp">mmHg</div>
+      </div>
+      <svg class="waveform" viewBox="0 0 600 80" preserveAspectRatio="none">
+        <g id="cvp-grid"></g>
+        <polyline id="cvp-wave" fill="none" stroke="#9c27b0" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+      </svg>
+    </div>
+    <!-- PA -->
+    <div id="pa-row" class="wave-row border-pa">
+      <div class="wave-label-area">
+        <div class="wave-label c-pa">PA</div>
+        <div id="m-pa" class="wave-num small c-pa2">25/10</div>
+        <div id="m-pam" class="wave-sub c-pa">(15)</div>
+      </div>
+      <svg class="waveform" viewBox="0 0 600 80" preserveAspectRatio="none">
+        <g id="pa-grid"></g>
+        <polyline id="pa-wave" fill="none" stroke="#ff9800" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+      </svg>
+    </div>
+    <!-- RESP -->
+    <div class="wave-row border-resp">
+      <div class="wave-label-area">
+        <div class="wave-label c-resp">RESP</div>
+        <div id="m-rr" class="wave-num c-resp">16</div>
+        <div class="wave-unit c-resp">/min</div>
+      </div>
+      <svg class="waveform" viewBox="0 0 600 80" preserveAspectRatio="none">
+        <g id="resp-grid"></g>
+        <polyline id="resp-wave" fill="none" stroke="#ffff44" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+      </svg>
+    </div>
+  </div>
+
+  <div id="monitor-footer">
+    <button id="btn-silence" class="smart-key" onclick="toggleSilence()">SILENCE</button>
+    <button class="smart-key" onclick="monitorAlarmState.active=false;renderMonitorAlarm()">ALARMS OFF</button>
+    <button id="btn-nbp" class="smart-key" onclick="cycleBP()">NBP</button>
+    <button class="smart-key" onclick="setView('display')">MAIN SCREEN</button>
+    <button class="smart-key" onclick="setView('control')">MAIN SETUP</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     VIEW: CONTROL PANEL
+============================================================ -->
+<div id="view-control" class="view">
+  <div class="ctrl-container">
+    <div class="ctrl-header">
+      <div>
+        <h1>ECMO Control Panel</h1>
+        <div class="ctrl-header-sub">Cardiohelp Simulator — Educator Interface</div>
+      </div>
+      <div class="ctrl-header-actions">
+        <label class="ctrl-toggle-label" id="variation-label">
+          <input type="checkbox" id="chk-variation" checked onchange="state.autoVariation=this.checked" />
+          Realistic Variation
+        </label>
+        <label class="ctrl-toggle-label locked" id="lock-label">
+          <input type="checkbox" id="chk-lock" onchange="toggleLock()" />
+          <span id="lock-text">🔒 Display Locked</span>
+        </label>
+        <button class="nav-btn btn-display"  onclick="setView('display')">ECMO Display</button>
+        <button class="nav-btn btn-monitor"  onclick="setView('monitor')">📊 ICU Monitor</button>
+        <button class="nav-btn btn-split"    onclick="setView('split')">Split View</button>
+        <button class="nav-btn btn-test"     onclick="setView('test')">🧪 Test Mode</button>
+      </div>
+    </div>
+
+    <!-- Scenarios -->
+    <div class="ctrl-section">
+      <div class="flex-between mb15">
+        <h2>Quick Scenarios</h2>
+        <button class="nav-btn btn-green" onclick="resetToBaseline()">↻ Reset to Baseline</button>
+      </div>
+      <div id="scenario-btns" class="scenario-grid"></div>
+    </div>
+
+    <!-- Main controls 2-col grid -->
+    <div class="ctrl-grid">
+      <!-- Pump Control -->
+      <div class="ctrl-section">
+        <h3>Pump Control (Realistic Mode)</h3>
+        <div class="flow-display">
+          <div style="font-size:12px;color:#666;margin-bottom:4px">Flow (Calculated Output):</div>
+          <div class="flow-num"><span id="c-flow">4.5</span> L/min</div>
+          <div class="flow-hint">✓ Auto-calculated from RPM + circuit resistance + drainage</div>
+        </div>
+        <div class="param-group">
+          <label>RPM (PRIMARY CONTROL): <span id="c-rpm-val">3200</span></label>
+          <input type="range" min="0" max="5000" step="100" id="sl-rpm" value="3200"
+            oninput="document.getElementById('c-rpm-val').textContent=this.value; updateParamCoupled('rpm',+this.value)" />
+          <div class="hint">Controls pump speed → flow responds to RPM + circuit conditions</div>
+        </div>
+        <div class="param-group">
+          <label>Inlet Pressure (Venous Drainage): <span id="c-inlet-val">-45</span> mmHg</label>
+          <input type="range" min="-500" max="0" step="5" id="sl-inlet" value="-45"
+            oninput="document.getElementById('c-inlet-val').textContent=this.value; updateParamCoupled('inletPressure',+this.value)" />
+          <div class="hint">Simulates patient position/volume — negative pressure limits flow</div>
+        </div>
+        <div class="param-group">
+          <label>Outlet Pressure: <span id="c-outlet-val">285</span> mmHg</label>
+          <input type="range" min="100" max="900" step="5" id="sl-outlet" value="285"
+            oninput="document.getElementById('c-outlet-val').textContent=this.value; updateParam('outletPressure',+this.value)" />
+          <div class="hint">Independent (manual override)</div>
+        </div>
+      </div>
+
+      <!-- Gas Exchange -->
+      <div class="ctrl-section">
+        <h3>Gas Exchange</h3>
+        <div class="param-group">
+          <label>Sweep Gas: <span id="c-sweep-val">4.0</span> L/min</label>
+          <input type="range" min="0" max="10" step="0.5" id="sl-sweep" value="4"
+            oninput="document.getElementById('c-sweep-val').textContent=(+this.value).toFixed(1); updateParam('sweepGas',+this.value)" />
+        </div>
+        <div class="param-group">
+          <label>FdO2: <span id="c-fdo2-val">100</span>%</label>
+          <input type="range" min="21" max="100" step="1" id="sl-fdo2" value="100"
+            oninput="document.getElementById('c-fdo2-val').textContent=this.value; updateParam('fdO2',+this.value)" />
+        </div>
+        <div class="param-group">
+          <label>SvO2: <span id="c-svo2-val">68</span>%</label>
+          <input type="range" min="40" max="90" step="1" id="sl-svo2" value="68"
+            oninput="document.getElementById('c-svo2-val').textContent=this.value; updateParam('svO2',+this.value)" />
+        </div>
+      </div>
+
+      <!-- Monitoring -->
+      <div class="ctrl-section">
+        <h3>Monitoring</h3>
+        <div class="param-group">
+          <label>Temperature: <span id="c-temp-val">37.0</span>°C</label>
+          <input type="range" min="32" max="39" step="0.1" id="sl-temp" value="37"
+            oninput="document.getElementById('c-temp-val').textContent=(+this.value).toFixed(1); updateParam('temperature',+this.value)" />
+        </div>
+        <div class="param-group">
+          <label>Delta P: <span id="c-deltap-val">55</span> mmHg</label>
+          <input type="range" min="20" max="200" step="5" id="sl-deltap" value="55"
+            oninput="document.getElementById('c-deltap-val').textContent=this.value; updateParam('deltaP',+this.value)" />
+        </div>
+        <div class="param-group">
+          <label>PFH (Hemolysis): <span id="c-pfh-val">0.02</span> g/dL</label>
+          <input type="range" min="0" max="0.15" step="0.01" id="sl-pfh" value="0.02"
+            oninput="document.getElementById('c-pfh-val').textContent=(+this.value).toFixed(2); updateParam('pfh',+this.value)" />
+        </div>
+      </div>
+
+      <!-- ICU Vitals -->
+      <div class="ctrl-section">
+        <div class="flex-between mb15">
+          <h3 style="margin:0">ICU Vital Signs</h3>
+          <button id="btn-autocouple" class="nav-btn btn-green" onclick="toggleAutoCouple()">✋ Manual</button>
+        </div>
+        <div id="autocouple-hint" style="font-size:11px;color:#666;margin-bottom:15px;font-style:italic">
+          ⚠️ Manual mode — vitals independent of ECMO
+        </div>
+        <div class="vitals-grid">
+          <div class="param-group">
+            <label>Heart Rate: <span id="c-hr-val">85</span> bpm</label>
+            <input type="range" min="40" max="160" step="1" id="sl-hr" value="85"
+              oninput="document.getElementById('c-hr-val').textContent=this.value; updateParam('icuHR',+this.value,true)" />
+          </div>
+          <div class="param-group">
+            <label>SpO2: <span id="c-spo2-val">96</span>%</label>
+            <input type="range" min="70" max="100" step="1" id="sl-spo2" value="96"
+              oninput="document.getElementById('c-spo2-val').textContent=this.value; updateParam('icuSpO2',+this.value,true)" />
+          </div>
+          <div class="param-group">
+            <label>Sys BP: <span id="c-sysbp-val">118</span> mmHg</label>
+            <input type="range" min="80" max="200" step="1" id="sl-sysbp" value="118"
+              oninput="document.getElementById('c-sysbp-val').textContent=this.value; updateParam('icuSysBP',+this.value,true)" />
+          </div>
+          <div class="param-group">
+            <label>Dia BP: <span id="c-diabp-val">72</span> mmHg</label>
+            <input type="range" min="40" max="120" step="1" id="sl-diabp" value="72"
+              oninput="document.getElementById('c-diabp-val').textContent=this.value; updateParam('icuDiaBP',+this.value,true)" />
+          </div>
+          <div class="param-group">
+            <label>Resp Rate: <span id="c-rr-val">16</span> /min</label>
+            <input type="range" min="6" max="40" step="1" id="sl-rr" value="16"
+              oninput="document.getElementById('c-rr-val').textContent=this.value; updateParam('icuRR',+this.value,true)" />
+          </div>
+          <div class="param-group">
+            <label>CVP: <span id="c-cvp-val">8</span> mmHg</label>
+            <input type="range" min="0" max="20" step="1" id="sl-cvp" value="8"
+              oninput="document.getElementById('c-cvp-val').textContent=this.value; updateParam('icuCVP',+this.value,true)" />
+          </div>
+          <div class="param-group">
+            <label>PAP: <span id="c-pa-val">25</span> mmHg</label>
+            <input type="range" min="10" max="80" step="1" id="sl-pa" value="25"
+              oninput="document.getElementById('c-pa-val').textContent=this.value; updateParam('icuPA',+this.value,true)" />
+          </div>
+          <div class="param-group">
+            <label>ECG Rhythm</label>
+            <select class="rhythm-select" id="sel-rhythm" onchange="changeRhythm(this.value)">
+              <option value="NSR">Normal Sinus Rhythm</option>
+              <option value="SinusBrady">Sinus Bradycardia</option>
+              <option value="SinusTachy">Sinus Tachycardia</option>
+              <option value="AFib">Atrial Fibrillation</option>
+              <option value="AFlutter">Atrial Flutter</option>
+              <option value="VTach">Ventricular Tachycardia</option>
+              <option value="VFib">Ventricular Fibrillation</option>
+              <option value="Asystole">Asystole</option>
+              <option value="1stAVB">1° AV Block</option>
+              <option value="2ndAVB1">2° AV Block Type I</option>
+              <option value="2ndAVB2">2° AV Block Type II</option>
+              <option value="3rdAVB">3° AV Block (Complete)</option>
+            </select>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <button id="btn-cvp" class="toggle-btn on" onclick="toggleCVP()">✓ CVP ON</button>
+          <button id="btn-pa" class="toggle-btn on" onclick="togglePA()">✓ PAP ON</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alarms -->
+    <div class="ctrl-section">
+      <h3>Alarms</h3>
+      <div id="ctrl-alarm-banner" style="display:none" class="active-alarm-banner">
+        <strong id="ctrl-alarm-text"></strong>
+        <button class="clear-btn" onclick="clearAlarm()">Clear</button>
+      </div>
+      <div class="alarm-trigger-grid">
+        <button class="alarm-trig-btn" id="abtn-LOW_INLET"  onclick="triggerAlarm('LOW_INLET')">Low Inlet Pressure</button>
+        <button class="alarm-trig-btn" id="abtn-HIGH_OUTLET" onclick="triggerAlarm('HIGH_OUTLET')">High Outlet Pressure</button>
+        <button class="alarm-trig-btn" id="abtn-HIGH_DELTA_P" onclick="triggerAlarm('HIGH_DELTA_P')">High Delta P</button>
+        <button class="alarm-trig-btn" id="abtn-LOW_FLOW"   onclick="triggerAlarm('LOW_FLOW')">Low Flow</button>
+        <button class="alarm-trig-btn" id="abtn-LOW_SVO2"   onclick="triggerAlarm('LOW_SVO2')">Low SvO₂</button>
+        <button class="alarm-trig-btn" id="abtn-HIGH_PFH"   onclick="triggerAlarm('HIGH_PFH')">High Hemolysis</button>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <strong>Instructions:</strong> Use this control panel to manipulate ECMO parameters during the scenario.
+      Changes sync in real-time to the display screen. Enable "Realistic Variation" for continuous parameter fluctuation
+      that mimics real pump behavior. <strong>Physiologic Coupling:</strong> When you adjust Flow or RPM, related
+      parameters (pressures, SvO2, Delta P) automatically change realistically.
+      Use "Reset to Baseline" to quickly return to normal physiologic settings.
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     VIEW: SPLIT (Side-by-side preview + control)
+============================================================ -->
+<div id="view-split" class="view">
+  <!-- Left: ECMO Display preview -->
+  <div id="split-left">
+    <div class="split-label">STUDENT VIEW (PREVIEW)</div>
+    <div id="split-display-preview" style="width:100%;height:100%;font-size:.7em;display:flex;flex-direction:column;background:#4a5f6d"></div>
+  </div>
+  <!-- Right: compact control -->
+  <div id="split-right">
+    <div style="max-width:600px;margin:0 auto">
+      <div style="background:#0f3460;color:#fff;padding:15px;border-radius:6px;margin-bottom:15px">
+        <h2 style="font-size:18px;margin-bottom:5px">ECMO Control Panel</h2>
+        <div style="font-size:12px;opacity:.8;margin-bottom:10px">Testing Mode — Adjust and Preview</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="nav-btn btn-display" onclick="setView('display')">Display Only</button>
+          <button class="nav-btn btn-control" style="background:#e8d154;color:#333" onclick="setView('control')">Control Only</button>
+          <button class="nav-btn btn-monitor" onclick="setView('monitor')">📊 ICU Monitor</button>
+          <button class="nav-btn btn-test"    onclick="setView('test')">🧪 Test Mode</button>
+        </div>
+      </div>
+      <!-- Mini scenarios -->
+      <div style="background:#fff;padding:15px;border-radius:6px;margin-bottom:15px;border:1px solid #ddd">
+        <div class="flex-between mb8">
+          <h3 style="font-size:14px">Quick Scenarios</h3>
+          <button class="nav-btn btn-green" style="padding:6px 12px;font-size:12px" onclick="resetToBaseline()">↻ Reset</button>
+        </div>
+        <div id="split-scenario-btns" class="scenario-grid"></div>
+      </div>
+      <!-- Mini controls -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px">
+        <div style="background:#fff;padding:12px;border-radius:6px;border:1px solid #ddd">
+          <h4 style="font-size:12px;color:#0f3460;margin-bottom:10px">Pump Control</h4>
+          <div style="background:#f0f0f0;padding:10px;border-radius:4px;border:2px solid #2196f3;margin-bottom:12px">
+            <div style="font-size:10px;color:#666;margin-bottom:2px">Flow (Calculated):</div>
+            <div style="font-size:20px;font-weight:bold;color:#2196f3;font-family:monospace"><span id="sp-flow">4.5</span> L/min</div>
+          </div>
+          <label style="font-size:11px;font-weight:bold;display:block;margin-bottom:5px">RPM: <span id="sp-rpm">3200</span></label>
+          <input type="range" min="0" max="5000" step="100" id="sl-sp-rpm" value="3200"
+            oninput="document.getElementById('sp-rpm').textContent=this.value; updateParamCoupled('rpm',+this.value)" />
+        </div>
+        <div style="background:#fff;padding:12px;border-radius:6px;border:1px solid #ddd">
+          <h4 style="font-size:12px;color:#0f3460;margin-bottom:10px">Pressures</h4>
+          <label style="font-size:11px;font-weight:bold;display:block;margin-bottom:5px">Inlet: <span id="sp-inlet">-45</span> mmHg</label>
+          <input type="range" min="-500" max="0" step="5" id="sl-sp-inlet" value="-45"
+            oninput="document.getElementById('sp-inlet').textContent=this.value; updateParamCoupled('inletPressure',+this.value)" />
+          <label style="font-size:11px;font-weight:bold;display:block;margin:10px 0 5px">Outlet: <span id="sp-outlet">285</span> mmHg</label>
+          <input type="range" min="100" max="900" step="5" id="sl-sp-outlet" value="285"
+            oninput="document.getElementById('sp-outlet').textContent=this.value; updateParam('outletPressure',+this.value)" />
+        </div>
+        <div style="background:#fff;padding:12px;border-radius:6px;border:1px solid #ddd">
+          <h4 style="font-size:12px;color:#0f3460;margin-bottom:10px">Gas Exchange</h4>
+          <label style="font-size:11px;font-weight:bold;display:block;margin-bottom:5px">Sweep: <span id="sp-sweep">4.0</span> L/min</label>
+          <input type="range" min="0" max="10" step="0.5" value="4"
+            oninput="document.getElementById('sp-sweep').textContent=(+this.value).toFixed(1); updateParam('sweepGas',+this.value)" />
+          <label style="font-size:11px;font-weight:bold;display:block;margin:10px 0 5px">SvO2: <span id="sp-svo2">68</span>%</label>
+          <input type="range" min="40" max="90" step="1" value="68"
+            oninput="document.getElementById('sp-svo2').textContent=this.value; updateParam('svO2',+this.value)" />
+        </div>
+        <div style="background:#fff;padding:12px;border-radius:6px;border:1px solid #ddd">
+          <h4 style="font-size:12px;color:#0f3460;margin-bottom:10px">Alarms</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <button class="alarm-trig-btn" style="font-size:11px" onclick="triggerAlarm('LOW_INLET')">Low Inlet</button>
+            <button class="alarm-trig-btn" style="font-size:11px" onclick="triggerAlarm('HIGH_OUTLET')">High Outlet</button>
+            <button class="alarm-trig-btn" style="font-size:11px" onclick="triggerAlarm('LOW_FLOW')">Low Flow</button>
+            <button class="alarm-trig-btn" style="font-size:11px" onclick="triggerAlarm('LOW_SVO2')">Low SvO₂</button>
+          </div>
+          <button class="nav-btn" style="width:100%;margin-top:8px;background:#4caf50;color:#fff;padding:6px" onclick="clearAlarm()">Clear Alarm</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     VIEW: TEST (3-panel grid)
+============================================================ -->
+<div id="view-test" class="view" style="display:none">
+  <!-- ECMO Display (left, full height) -->
+  <div class="test-panel test-ecmo-display">
+    <div class="test-label" style="background:rgba(0,217,255,.9);color:#000">📺 ECMO DISPLAY</div>
+    <div id="test-display-inner" style="padding:15px;padding-top:40px;color:#fff">
+      <div style="font-size:20px;font-weight:bold;color:#8a9fad;margin-bottom:15px;text-align:center">CARDIOHELP ECMO</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="background:#fff;padding:12px;border-radius:8px;border:3px solid #2196f3">
+          <div style="font-size:12px;color:#666">FLOW</div>
+          <div id="t-flow" style="font-size:40px;font-weight:bold;color:#1976d2;font-family:monospace">4.5</div>
+          <div style="font-size:12px;color:#666">L/min</div>
+        </div>
+        <div style="background:#fff;padding:12px;border-radius:8px;border:3px solid #999">
+          <div style="font-size:12px;color:#666">RPM</div>
+          <div id="t-rpm" style="font-size:40px;font-weight:bold;color:#d32f2f;font-family:monospace">3200</div>
+        </div>
+        <div style="background:#fff;padding:12px;border-radius:8px;border:3px solid #999">
+          <div style="font-size:11px;color:#999">P<sub>Ven</sub> mmHg</div>
+          <div id="t-pven" style="font-size:36px;font-weight:bold;color:#0066cc;font-family:monospace">-45</div>
+        </div>
+        <div style="background:#fff;padding:12px;border-radius:8px;border:3px solid #999">
+          <div style="font-size:11px;color:#999">P<sub>Art</sub> mmHg</div>
+          <div id="t-part" style="font-size:36px;font-weight:bold;color:#0066cc;font-family:monospace">285</div>
+        </div>
+        <div style="background:#fff;padding:12px;border-radius:8px;border:3px solid #999">
+          <div style="font-size:11px;color:#999">SvO₂ %</div>
+          <div id="t-svo2" style="font-size:36px;font-weight:bold;color:#0066cc;font-family:monospace">68</div>
+        </div>
+        <div style="background:#fff;padding:12px;border-radius:8px;border:3px solid #999">
+          <div style="font-size:11px;color:#999">Sweep L/min</div>
+          <div id="t-sweep" style="font-size:36px;font-weight:bold;color:#0066cc;font-family:monospace">4.0</div>
+        </div>
+      </div>
+      <div id="t-alarm-box" style="display:none;margin-top:12px;background:#ffcccc;border:2px solid #e53935;border-radius:6px;padding:10px;color:#c00;font-weight:bold;text-align:center"></div>
+    </div>
+  </div>
+
+  <!-- ICU Monitor (top right) -->
+  <div class="test-panel test-monitor-panel" style="overflow:hidden;display:flex;flex-direction:column">
+    <div class="test-label" style="background:rgba(233,30,99,.9);color:#fff">📊 ICU MONITOR</div>
+    <div style="display:flex;flex-direction:column;height:100%;padding-top:35px;overflow:hidden">
+      <div style="display:flex;flex-direction:column;gap:3px;padding:4px;flex:1;overflow:hidden">
+        <!-- Mini ECG -->
+        <div style="flex:1;background:#0a0a0a;border:1px solid #1a4d1a;border-radius:3px;padding:4px;display:grid;grid-template-columns:80px 1fr;gap:4px;min-height:45px">
+          <div style="display:flex;flex-direction:column;justify-content:center">
+            <div style="font-size:9px;color:#44ff44">ECG</div>
+            <div id="tm-hr" style="font-size:26px;font-weight:bold;color:#44ff44;font-family:monospace">85</div>
+          </div>
+          <svg viewBox="0 0 600 80" preserveAspectRatio="none" style="width:100%;height:100%">
+            <polyline id="tecg-wave" fill="none" stroke="#44ff44" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+          </svg>
+        </div>
+        <!-- Mini ABP -->
+        <div style="flex:1;background:#0a0a0a;border:1px solid #4d1a1a;border-radius:3px;padding:4px;display:grid;grid-template-columns:80px 1fr;gap:4px;min-height:45px">
+          <div style="display:flex;flex-direction:column;justify-content:center">
+            <div style="font-size:9px;color:#ff4444">ABP</div>
+            <div id="tm-bp" style="font-size:18px;font-weight:bold;color:#ff4444;font-family:monospace">118/72</div>
+          </div>
+          <svg viewBox="0 0 600 80" preserveAspectRatio="none" style="width:100%;height:100%">
+            <polyline id="tabp-wave" fill="none" stroke="#ff4444" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+          </svg>
+        </div>
+        <!-- Mini SpO2 -->
+        <div style="flex:1;background:#0a0a0a;border:1px solid #1a3a4d;border-radius:3px;padding:4px;display:grid;grid-template-columns:80px 1fr;gap:4px;min-height:45px">
+          <div style="display:flex;flex-direction:column;justify-content:center">
+            <div style="font-size:9px;color:#44aaff">SpO₂</div>
+            <div id="tm-spo2" style="font-size:26px;font-weight:bold;color:#44aaff;font-family:monospace">96</div>
+          </div>
+          <svg viewBox="0 0 600 80" preserveAspectRatio="none" style="width:100%;height:100%">
+            <polyline id="tspo2-wave" fill="none" stroke="#44aaff" stroke-width="2" vector-effect="non-scaling-stroke" points=""/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Control Panel (bottom right) -->
+  <div class="test-panel test-control-panel">
+    <div class="test-label" style="background:rgba(255,152,0,.9);color:#fff;position:static;margin-bottom:10px;display:inline-block">⚙ CONTROL</div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;font-weight:bold;display:block;margin-bottom:3px">RPM: <span id="tc-rpm">3200</span></label>
+      <input type="range" min="0" max="5000" step="100" value="3200"
+        oninput="document.getElementById('tc-rpm').textContent=this.value; updateParamCoupled('rpm',+this.value)" />
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;font-weight:bold;display:block;margin-bottom:3px">Sweep Gas: <span id="tc-sweep">4.0</span> L/min</label>
+      <input type="range" min="0" max="10" step="0.5" value="4"
+        oninput="document.getElementById('tc-sweep').textContent=(+this.value).toFixed(1); updateParam('sweepGas',+this.value)" />
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;font-weight:bold;display:block;margin-bottom:3px">ECG Rhythm</label>
+      <select class="rhythm-select" style="font-size:10px;padding:4px" onchange="changeRhythm(this.value)">
+        <option value="NSR">NSR</option>
+        <option value="SinusBrady">Sinus Brady</option>
+        <option value="SinusTachy">Sinus Tachy</option>
+        <option value="AFib">A Fib</option>
+        <option value="AFlutter">A Flutter</option>
+        <option value="VTach">V Tach</option>
+        <option value="VFib">V Fib</option>
+        <option value="Asystole">Asystole</option>
+        <option value="1stAVB">1° AVB</option>
+        <option value="2ndAVB1">2° AVB I</option>
+        <option value="2ndAVB2">2° AVB II</option>
+        <option value="3rdAVB">3° AVB</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="alarm-trig-btn" style="font-size:10px;padding:6px" onclick="triggerAlarm('LOW_INLET')">Low Inlet</button>
+      <button class="alarm-trig-btn" style="font-size:10px;padding:6px" onclick="triggerAlarm('HIGH_OUTLET')">High Outlet</button>
+      <button class="alarm-trig-btn" style="font-size:10px;padding:6px" onclick="triggerAlarm('LOW_FLOW')">Low Flow</button>
+      <button class="alarm-trig-btn" style="font-size:10px;padding:6px" onclick="clearAlarm()">Clear</button>
+    </div>
+    <button class="nav-btn btn-control" style="width:100%;padding:8px;font-size:11px" onclick="setView('control')">Full Control Panel →</button>
+    <button class="nav-btn" style="width:100%;padding:8px;font-size:11px;background:#f44336;color:#fff;margin-top:6px" onclick="setView('control')">← Exit Test Mode</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     JAVASCRIPT
+============================================================ -->
+<script>
+/* ============================================================
+   STATE
+============================================================ */
+const defaultParams = {
+  flow: 4.5, rpm: 3200,
+  inletPressure: -45, outletPressure: 285,
+  sweepGas: 4.0, fdO2: 100, svO2: 68,
+  temperature: 37.0, deltaP: 55, pfh: 0.02,
+  alarm: null, locked: true,
+  icuHR: 85, icuSysBP: 118, icuDiaBP: 72, icuMAP: 75,
+  icuSpO2: 96, icuRR: 16, icuCVP: 8, icuPA: 25,
+  icuAutoCouple: false
+};
+
+let state = {
+  base: { ...defaultParams },
+  params: { ...defaultParams },
+  autoVariation: true,
+  selectedRhythm: 'NSR',
+  showCVP: true, showPA: true,
+  alarmSilenced: false,
+  cyclingBP: false,
+  monitorAlarmState: { active: false, type: '', priority: 'low' },
+  waveOffset: 0,
+  vitalFluctuation: { hrOffset:0, sysOffset:0, diaOffset:0, spo2Offset:0, rrOffset:0, cvpOffset:0, paOffset:0 }
+};
+
+const patientPhysiology = {
+  nativeCardiacOutput: 3.5, svr: 1200, volumeStatus: 0,
+  contractility: 1.0, lungFunction: 0.4, vo2: 250,
+  respiratoryRate: 16, metabolicState: 1.0
+};
+
+const BASELINE = {
+  rpm: 2900, inletPressure: -45, outletPressure: 285,
+  sweepGas: 4.0, fdO2: 100, temperature: 37.0, alarm: null
+};
+
+/* ============================================================
+   SCENARIOS
+============================================================ */
+const presetScenarios = [
+  { name:'Stable Baseline',
+    params:{flow:4.0,rpm:2900,inletPressure:-45,outletPressure:285,sweepGas:4.0,fdO2:100,svO2:68,temperature:37.0,deltaP:55,pfh:0.02,alarm:null},
+    physiology:{volumeStatus:0,svr:1200,contractility:0.8,lungFunction:0.3,nativeCardiacOutput:3.5,vo2:250,respiratoryRate:16,metabolicState:1.0}},
+  { name:'Position Change - Low Inlet',
+    params:{flow:3.5,rpm:3100,inletPressure:-150,outletPressure:280,sweepGas:4.0,fdO2:100,svO2:62,temperature:37.0,deltaP:58,pfh:0.03,alarm:'LOW_INLET'},
+    physiology:{volumeStatus:-1.8,svr:1150,contractility:0.75,lungFunction:0.25,nativeCardiacOutput:3.5,vo2:260,respiratoryRate:18,metabolicState:1.0}},
+  { name:'Increased Flow Demand',
+    params:{flow:5.0,rpm:3200,inletPressure:-30,outletPressure:320,sweepGas:5.0,fdO2:100,svO2:75,temperature:37.2,deltaP:68,pfh:0.04,alarm:null},
+    physiology:{volumeStatus:1.0,svr:1350,contractility:1.0,lungFunction:0.35,nativeCardiacOutput:4.2,vo2:300,respiratoryRate:20,metabolicState:1.2}},
+  { name:'Circuit Issue - High Delta P',
+    params:{flow:3.8,rpm:3200,inletPressure:-55,outletPressure:330,sweepGas:4.0,fdO2:100,svO2:63,temperature:37.3,deltaP:145,pfh:0.12,alarm:'HIGH_DELTA_P'},
+    physiology:{volumeStatus:-0.3,svr:1380,contractility:0.8,lungFunction:0.3,nativeCardiacOutput:3.5,vo2:250,respiratoryRate:16,metabolicState:1.0}},
+  { name:'Sitting EOB - Flow Drop',
+    params:{flow:3.0,rpm:2600,inletPressure:-105,outletPressure:265,sweepGas:4.0,fdO2:100,svO2:60,temperature:37.0,deltaP:62,pfh:0.03,alarm:'LOW_FLOW'},
+    physiology:{volumeStatus:-1.2,svr:1050,contractility:0.7,lungFunction:0.28,nativeCardiacOutput:3.2,vo2:255,respiratoryRate:18,metabolicState:1.0}},
+  { name:'Standing - Increased Afterload',
+    params:{flow:4.0,rpm:2900,inletPressure:-65,outletPressure:380,sweepGas:4.0,fdO2:100,svO2:64,temperature:37.0,deltaP:78,pfh:0.04,alarm:null},
+    physiology:{volumeStatus:-0.5,svr:1650,contractility:0.8,lungFunction:0.3,nativeCardiacOutput:3.5,vo2:270,respiratoryRate:17,metabolicState:1.0}},
+  { name:'Transfer to Chair - Kinking',
+    params:{flow:2.8,rpm:2700,inletPressure:-125,outletPressure:255,sweepGas:4.0,fdO2:100,svO2:58,temperature:37.0,deltaP:65,pfh:0.03,alarm:'LOW_FLOW'},
+    physiology:{volumeStatus:-1.5,svr:1000,contractility:0.7,lungFunction:0.28,nativeCardiacOutput:3.0,vo2:255,respiratoryRate:19,metabolicState:1.0}},
+  { name:'Critical - Severe Venous Collapse',
+    params:{flow:2.0,rpm:2300,inletPressure:-185,outletPressure:220,sweepGas:4.0,fdO2:100,svO2:52,temperature:37.0,deltaP:55,pfh:0.02,alarm:'LOW_INLET'},
+    physiology:{volumeStatus:-2.0,svr:850,contractility:0.6,lungFunction:0.2,nativeCardiacOutput:2.0,vo2:260,respiratoryRate:22,metabolicState:1.0}},
+  { name:'High Outlet - Hypertension',
+    params:{flow:4.2,rpm:2950,inletPressure:-45,outletPressure:580,sweepGas:4.0,fdO2:100,svO2:66,temperature:37.0,deltaP:58,pfh:0.03,alarm:'HIGH_OUTLET'},
+    physiology:{volumeStatus:0,svr:2100,contractility:0.75,lungFunction:0.3,nativeCardiacOutput:3.5,vo2:250,respiratoryRate:16,metabolicState:1.0}},
+  { name:'Low SvO2 - Inadequate Support',
+    params:{flow:2.5,rpm:2600,inletPressure:-60,outletPressure:245,sweepGas:3.5,fdO2:100,svO2:50,temperature:37.0,deltaP:52,pfh:0.02,alarm:'LOW_SVO2'},
+    physiology:{volumeStatus:-0.5,svr:1100,contractility:0.65,lungFunction:0.25,nativeCardiacOutput:2.5,vo2:290,respiratoryRate:20,metabolicState:1.15}}
+];
+
+/* ============================================================
+   PHYSICS HELPERS
+============================================================ */
+function calcFlow(rpm, inletPressure, outletPressure, deltaP) {
+  let flow = rpm * 0.0014;
+  const inletEffect = (inletPressure + 45) * 0.008;
+  flow *= (1 + inletEffect / 100);
+  const afterloadPenalty = (outletPressure - 285) * 0.015;
+  flow *= (1 - afterloadPenalty / 100);
+  if (deltaP > 80) { flow *= (1 - (deltaP - 80) * 0.5 / 100); }
+  return Math.max(0, Math.min(9.9, parseFloat(flow.toFixed(1))));
+}
+function calcSvO2(flow) {
+  return Math.round(Math.max(40, Math.min(90, 68 + (flow - 4.5) * 2)));
+}
+function calcDeltaP(flow) {
+  return Math.round(Math.max(20, Math.min(200, 45 + flow * 2)));
+}
+function calcPFH(flow, deltaP, rpm) {
+  let pfh = 0.01;
+  if (rpm > 3500) pfh += (rpm - 3500) * 0.000003;
+  if (flow > 5.5) pfh += (flow - 5.5) * 0.003;
+  if (deltaP > 80) pfh += (deltaP - 80) * 0.0003;
+  return parseFloat(Math.min(0.15, pfh).toFixed(3));
+}
+function calcNativeCO(ecmoFlow, phys) {
+  const base = 2.0 * phys.contractility;
+  const volEffect = 1 + phys.volumeStatus * 0.15;
+  return Math.min(3.0, Math.max(1.0, base * volEffect));
+}
+function calcActualBP(totalCO, svr, nativeCO) {
+  const svrWood = svr / 80;
+  const map = totalCO * svrWood;
+  const nativeFrac = nativeCO / totalCO;
+  const pp = 5 + nativeFrac * 35;
+  return {
+    sysBP: Math.round(Math.max(60, Math.min(220, map + pp * 2/3))),
+    diaBP: Math.round(Math.max(40, Math.min(120, map - pp * 1/3))),
+    map:   Math.round(Math.max(50, Math.min(150, map)))
+  };
+}
+function calcCombinedSpO2(ecmoFlow, totalCO, phys, fdO2) {
+  const ecmoFrac = ecmoFlow / totalCO;
+  const nativeFrac = 1 - ecmoFrac;
+  const ecmoSat = fdO2 * 0.98;
+  const nativeSat = 60 + phys.lungFunction * 35;
+  return Math.round(Math.max(75, Math.min(100, ecmoFrac * ecmoSat + nativeFrac * nativeSat)));
+}
+function calcHR(totalCO, bp, phys) {
+  let hr = 70;
+  if (totalCO < 4.5) hr += (4.5 - totalCO) * 15;
+  if (bp.map < 65) hr += (65 - bp.map) * 1.5;
+  hr *= phys.metabolicState;
+  if (phys.volumeStatus < 0) hr += Math.abs(phys.volumeStatus) * 20;
+  return Math.round(Math.max(50, Math.min(150, hr)));
+}
+
+function applyRhythmHR(hr, rhythm) {
+  if (rhythm === 'Asystole' || rhythm === 'VFib') return 0;
+  if (rhythm === 'VTach') return Math.round(150 + (Math.random() - 0.5) * 20);
+  if (rhythm === 'SinusBrady') return Math.round(Math.min(hr, 55));
+  if (rhythm === 'SinusTachy') return Math.round(Math.max(hr, 110));
+  if (rhythm === '3rdAVB') return Math.round(Math.max(35, Math.min(45, hr * 0.5)));
+  return hr;
+}
+
+function applyPhysiologicCoupling(paramName, newValue, current) {
+  const updated = { ...current, [paramName]: newValue };
+  const dp = current.deltaP;
+  if (paramName === 'rpm') {
+    updated.flow = calcFlow(newValue, current.inletPressure, current.outletPressure, dp);
+    updated.deltaP = calcDeltaP(updated.flow);
+    updated.pfh = calcPFH(updated.flow, updated.deltaP, newValue);
+  } else if (paramName === 'inletPressure') {
+    updated.flow = calcFlow(current.rpm, newValue, current.outletPressure, dp);
+    updated.pfh = calcPFH(updated.flow, dp, current.rpm);
+  } else if (paramName === 'outletPressure') {
+    updated.flow = calcFlow(current.rpm, current.inletPressure, newValue, dp);
+    updated.pfh = calcPFH(updated.flow, dp, current.rpm);
+  } else if (paramName === 'deltaP') {
+    updated.flow = calcFlow(current.rpm, current.inletPressure, current.outletPressure, newValue);
+    updated.pfh = calcPFH(updated.flow, newValue, current.rpm);
+  }
+  // Auto-alarms
+  if (!updated.alarm) {
+    if (updated.inletPressure <= -150)  updated.alarm = 'LOW_INLET';
+    else if (updated.outletPressure >= 500) updated.alarm = 'HIGH_OUTLET';
+    else if (updated.deltaP >= 100)     updated.alarm = 'HIGH_DELTA_P';
+    else if (updated.flow < 3.0)        updated.alarm = 'LOW_FLOW';
+    else if (updated.svO2 < 60)         updated.alarm = 'LOW_SVO2';
+  } else {
+    if (updated.alarm === 'LOW_INLET'    && updated.inletPressure > -140)  updated.alarm = null;
+    if (updated.alarm === 'HIGH_OUTLET'  && updated.outletPressure < 480)  updated.alarm = null;
+    if (updated.alarm === 'HIGH_DELTA_P' && updated.deltaP < 90)           updated.alarm = null;
+    if (updated.alarm === 'LOW_FLOW'     && updated.flow >= 3.5)           updated.alarm = null;
+    if (updated.alarm === 'LOW_SVO2'     && updated.svO2 >= 62)            updated.alarm = null;
+  }
+  return updated;
+}
+
+/* ============================================================
+   STATE MUTATORS
+============================================================ */
+function updateParam(key, value, manualVital) {
+  state.base[key] = value;
+  if (manualVital) state.base.icuAutoCouple = false;
+  if (key === 'icuSysBP' || key === 'icuDiaBP') {
+    state.base.icuMAP = Math.round((state.base.icuSysBP + 2 * state.base.icuDiaBP) / 3);
+  }
+  renderAll();
+}
+
+function updateParamCoupled(key, value) {
+  const coupled = applyPhysiologicCoupling(key, value, state.base);
+  state.base = coupled;
+  renderAll();
+}
+
+function resetToBaseline() {
+  const flow = calcFlow(BASELINE.rpm, BASELINE.inletPressure, BASELINE.outletPressure, 55);
+  const svO2 = calcSvO2(flow);
+  const deltaP = calcDeltaP(flow);
+  const pfh = calcPFH(flow, deltaP, BASELINE.rpm);
+  state.base = { ...defaultParams, ...BASELINE, flow, svO2, deltaP, pfh };
+  syncSliders();
+  renderAll();
+}
+
+function applyPreset(preset) {
+  const phys = preset.physiology;
+  const nativeCO = calcNativeCO(preset.params.flow, phys);
+  const totalCO = nativeCO + preset.params.flow;
+  const bp = calcActualBP(totalCO, phys.svr, nativeCO);
+  const hr = calcHR(totalCO, bp, phys);
+  const displayHR = applyRhythmHR(hr, state.selectedRhythm);
+  const spO2 = calcCombinedSpO2(preset.params.flow, totalCO, phys, preset.params.fdO2);
+  let rr = phys.respiratoryRate;
+  if (spO2 < 88) rr += Math.round((88 - spO2) * 0.8);
+  if (bp.map < 60) rr += 6;
+  rr = Math.max(8, Math.min(35, rr));
+  const cvp = Math.round(8 + phys.volumeStatus * 4 + (preset.params.inletPressure + 45) / 10);
+  state.base = {
+    ...state.base,
+    ...preset.params,
+    icuHR: displayHR, icuSysBP: bp.sysBP, icuDiaBP: bp.diaBP,
+    icuMAP: bp.map, icuSpO2: spO2, icuRR: rr, icuCVP: cvp
+  };
+  syncSliders();
+  renderAll();
+}
+
+function clearAlarm()          { state.base.alarm = null; renderAll(); }
+function triggerAlarm(type)    { state.base.alarm = type; renderAll(); }
+function toggleLock()          { state.base.locked = !state.base.locked; renderAll(); }
+function toggleAutoCouple()    {
+  state.base.icuAutoCouple = !state.base.icuAutoCouple;
+  document.getElementById('btn-autocouple').textContent = state.base.icuAutoCouple ? '🔗 Auto-Coupled' : '✋ Manual';
+  document.getElementById('btn-autocouple').style.background = state.base.icuAutoCouple ? '#4caf50' : '#ff9800';
+  document.getElementById('autocouple-hint').textContent = state.base.icuAutoCouple
+    ? '✓ Vitals automatically respond to ECMO changes'
+    : '⚠️ Manual mode — vitals independent of ECMO';
+}
+function toggleCVP() {
+  state.showCVP = !state.showCVP;
+  document.getElementById('cvp-row').style.display = state.showCVP ? '' : 'none';
+  document.getElementById('btn-cvp').className = 'toggle-btn ' + (state.showCVP ? 'on' : 'off');
+  document.getElementById('btn-cvp').textContent = state.showCVP ? '✓ CVP ON' : 'CVP OFF';
+}
+function togglePA() {
+  state.showPA = !state.showPA;
+  document.getElementById('pa-row').style.display = state.showPA ? '' : 'none';
+  document.getElementById('btn-pa').className = 'toggle-btn ' + (state.showPA ? 'on' : 'off');
+  document.getElementById('btn-pa').textContent = state.showPA ? '✓ PAP ON' : 'PAP OFF';
+}
+function changeRhythm(r) {
+  state.selectedRhythm = r;
+  const rhythmHR = { NSR:75,SinusBrady:45,SinusTachy:115,AFib:85,AFlutter:75,
+    VTach:150,VFib:0,Asystole:0,'1stAVB':75,'2ndAVB1':70,'2ndAVB2':65,'3rdAVB':40 };
+  if (rhythmHR[r] !== undefined && rhythmHR[r] > 0) {
+    state.base.icuHR = rhythmHR[r];
+  }
+  // sync all rhythm selects
+  document.querySelectorAll('select').forEach(s => { if(s.querySelector('option[value="NSR"]')) s.value = r; });
+}
+function studentAdjRpm(delta) {
+  if (state.base.locked) return;
+  let newRpm = Math.max(0, Math.min(5000, state.base.rpm + delta));
+  newRpm = Math.round(newRpm / 100) * 100;
+  updateParamCoupled('rpm', newRpm);
+}
+function toggleSilence() {
+  state.alarmSilenced = !state.alarmSilenced;
+  const btn = document.getElementById('btn-silence');
+  btn.textContent = state.alarmSilenced ? 'SILENCED ✓' : 'SILENCE';
+  btn.className = 'smart-key' + (state.alarmSilenced ? ' active' : '');
+}
+function cycleBP() {
+  if (state.cyclingBP) return;
+  state.cyclingBP = true;
+  const btn = document.getElementById('btn-nbp');
+  btn.textContent = 'CYCLING...'; btn.className = 'smart-key cycling';
+  setTimeout(() => {
+    state.cyclingBP = false;
+    btn.textContent = 'NBP'; btn.className = 'smart-key';
+  }, 3000);
+}
+
+/* ============================================================
+   VIEW SWITCHING
+============================================================ */
+function setView(name) {
+  document.querySelectorAll('.view').forEach(v => { v.classList.remove('active'); v.style.display = 'none'; });
+  const el = document.getElementById('view-' + name);
+  if (el) {
+    el.style.display = '';
+    el.classList.add('active');
+  }
+  // fix test mode grid display
+  if (name === 'test') { el.style.display = 'grid'; }
+  // fix split mode flex display
+  if (name === 'split') { el.style.display = 'flex'; }
+}
+
+/* ============================================================
+   RENDER — DISPLAY VIEW
+============================================================ */
+function renderDisplay() {
+  const p = state.params;
+  // ECMO params
+  setText('d-flow',   p.flow.toFixed(1));
+  setText('d-rpm',    p.rpm);
+  setText('d-pven',   p.inletPressure);
+  setText('d-part',   p.outletPressure);
+  setText('d-deltap', p.deltaP);
+  setText('d-svo2',   p.svO2);
+  setText('d-sweep',  p.sweepGas.toFixed(1));
+  setText('d-fdo2',   p.fdO2);
+  // PVen warning
+  const pvenWarn = p.inletPressure < -100;
+  toggleClass('d-pven-cell', 'warn', pvenWarn);
+  toggleClass('d-pven', 'warn', pvenWarn);
+  // Alarm banner
+  const banner = document.getElementById('alarm-banner');
+  const aIcon  = document.getElementById('alarm-icon');
+  const aText  = document.getElementById('alarm-text');
+  const alarmIcon = document.getElementById('d-alarm-icon');
+  if (p.alarm) {
+    banner.className = 'alarm-banner active-alarm';
+    aIcon.style.display = 'inline';
+    aText.textContent = alarmLabels[p.alarm] || p.alarm;
+    alarmIcon.className = 'icon-cell alarm-active';
+  } else {
+    banner.className = 'alarm-banner no-alarm';
+    aIcon.style.display = 'none';
+    aText.textContent = '';
+    alarmIcon.className = 'icon-cell';
+  }
+  // Student controls
+  const sc = document.getElementById('student-controls');
+  sc.style.display = state.base.locked ? 'none' : 'block';
+  if (!state.base.locked) {
+    setText('s-flow',  p.flow.toFixed(1));
+    setText('s-rpm',   p.rpm);
+    setText('s-inlet', p.inletPressure);
+    setText('s-svo2',  p.svO2);
+    setText('s-sweep', p.sweepGas.toFixed(1));
+  }
+  // Time
+  setText('display-time', new Date().toLocaleTimeString('en-US',{hour12:false}));
+}
+
+const alarmLabels = {
+  LOW_INLET:   'Low inlet pressure',
+  HIGH_OUTLET: 'High outlet pressure',
+  HIGH_DELTA_P:'High Delta P',
+  LOW_FLOW:    'Low Flow',
+  LOW_SVO2:    'Low SvO₂',
+  HIGH_PFH:    'High Hemolysis (PFH)'
+};
+
+/* ============================================================
+   RENDER — CONTROL VIEW
+============================================================ */
+function renderControl() {
+  const b = state.base;
+  setText('c-flow',      b.flow.toFixed(1));
+  // sliders
+  syncSliderDisplay('sl-rpm',    'c-rpm-val',    b.rpm);
+  syncSliderDisplay('sl-inlet',  'c-inlet-val',  b.inletPressure);
+  syncSliderDisplay('sl-outlet', 'c-outlet-val', b.outletPressure);
+  syncSliderDisplay('sl-sweep',  'c-sweep-val',  b.sweepGas.toFixed(1));
+  syncSliderDisplay('sl-fdo2',   'c-fdo2-val',   b.fdO2);
+  syncSliderDisplay('sl-svo2',   'c-svo2-val',   b.svO2);
+  syncSliderDisplay('sl-temp',   'c-temp-val',   b.temperature.toFixed(1));
+  syncSliderDisplay('sl-deltap', 'c-deltap-val', b.deltaP);
+  syncSliderDisplay('sl-pfh',    'c-pfh-val',    b.pfh.toFixed(2));
+  syncSliderDisplay('sl-hr',     'c-hr-val',     b.icuHR);
+  syncSliderDisplay('sl-spo2',   'c-spo2-val',   b.icuSpO2);
+  syncSliderDisplay('sl-sysbp',  'c-sysbp-val',  b.icuSysBP);
+  syncSliderDisplay('sl-diabp',  'c-diabp-val',  b.icuDiaBP);
+  syncSliderDisplay('sl-rr',     'c-rr-val',     b.icuRR);
+  syncSliderDisplay('sl-cvp',    'c-cvp-val',    b.icuCVP);
+  syncSliderDisplay('sl-pa',     'c-pa-val',     b.icuPA);
+  // Lock label
+  const lockLabel = document.getElementById('lock-label');
+  const lockText  = document.getElementById('lock-text');
+  const chkLock   = document.getElementById('chk-lock');
+  lockLabel.className = 'ctrl-toggle-label ' + (b.locked ? 'locked' : 'unlocked');
+  lockText.textContent = b.locked ? '🔒 Display Locked' : '🔓 Students Can Control';
+  chkLock.checked = !b.locked;
+  // Alarm banner
+  const ctrlBanner = document.getElementById('ctrl-alarm-banner');
+  const ctrlText   = document.getElementById('ctrl-alarm-text');
+  if (b.alarm) {
+    ctrlBanner.style.display = 'flex';
+    ctrlText.textContent = 'ACTIVE ALARM: ' + b.alarm;
+  } else {
+    ctrlBanner.style.display = 'none';
+  }
+  // Alarm buttons highlight
+  Object.keys(alarmLabels).forEach(k => {
+    const btn = document.getElementById('abtn-'+k);
+    if (btn) btn.className = 'alarm-trig-btn' + (b.alarm === k ? ' active' : '');
+  });
+  // Split sliders
+  syncSliderDisplay('sl-sp-rpm',    'sp-rpm',    b.rpm);
+  syncSliderDisplay('sl-sp-inlet',  'sp-inlet',  b.inletPressure);
+  syncSliderDisplay('sl-sp-outlet', 'sp-outlet', b.outletPressure);
+  setText('sp-flow',  b.flow.toFixed(1));
+  setText('sp-svo2',  b.svO2);
+  setText('sp-sweep', b.sweepGas.toFixed(1));
+}
+
+function syncSliderDisplay(sliderId, labelId, value) {
+  const sl = document.getElementById(sliderId);
+  const lb = document.getElementById(labelId);
+  if (sl) sl.value = value;
+  if (lb) lb.textContent = value;
+}
+
+function syncSliders() {
+  const b = state.base;
+  [['sl-rpm',b.rpm],['sl-inlet',b.inletPressure],['sl-outlet',b.outletPressure],
+   ['sl-sweep',b.sweepGas],['sl-fdo2',b.fdO2],['sl-svo2',b.svO2],
+   ['sl-temp',b.temperature],['sl-deltap',b.deltaP],['sl-pfh',b.pfh],
+   ['sl-hr',b.icuHR],['sl-spo2',b.icuSpO2],['sl-sysbp',b.icuSysBP],
+   ['sl-diabp',b.icuDiaBP],['sl-rr',b.icuRR],['sl-cvp',b.icuCVP],
+   ['sl-pa',b.icuPA],
+   ['sl-sp-rpm',b.rpm],['sl-sp-inlet',b.inletPressure],['sl-sp-outlet',b.outletPressure]
+  ].forEach(([id,v]) => { const el=document.getElementById(id); if(el) el.value=v; });
+}
+
+/* ============================================================
+   RENDER — MONITOR VIEW
+============================================================ */
+function renderMonitor() {
+  const p = state.params;
+  const f = state.vitalFluctuation;
+  const hr  = Math.max(0, p.icuHR  + f.hrOffset);
+  const sys = Math.max(0, p.icuSysBP + f.sysOffset);
+  const dia = Math.max(0, p.icuDiaBP + f.diaOffset);
+  const map = Math.round((sys + 2*dia)/3);
+  const spo2= Math.min(100, Math.max(0, p.icuSpO2 + f.spo2Offset));
+  const rr  = Math.max(0, p.icuRR + f.rrOffset);
+  const cvp = Math.max(0, p.icuCVP + f.cvpOffset);
+  const pa  = 25 + f.paOffset;
+  const pad = 10 + Math.round(f.paOffset / 2);
+  const pam = Math.round(15 + f.paOffset * 0.7);
+
+  setText('m-hr',  hr || '---');
+  setText('m-bp',  `${sys}/${dia}`);
+  setText('m-map', `(${map})`);
+  setText('m-spo2', spo2);
+  setText('m-cvp',  cvp);
+  setText('m-rr',   rr);
+  setText('m-pa',   `${pa}/${pad}`);
+  setText('m-pam',  `(${pam})`);
+
+  // Clocks
+  const now = new Date();
+  setText('monitor-clock', now.toLocaleTimeString('en-US',{hour12:false}));
+  setText('monitor-date',  now.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}));
+
+  renderMonitorAlarm();
+
+  // Test mode monitor
+  setText('tm-hr',   hr || '---');
+  setText('tm-bp',   `${sys}/${dia}`);
+  setText('tm-spo2', spo2);
+}
+
+function renderMonitorAlarm() {
+  if (state.alarmSilenced) return;
+  const bar = document.getElementById('monitor-alarm-bar');
+  const ma = state.monitorAlarmState;
+  if (ma.active) {
+    bar.className = 'alarm-' + ma.priority;
+    bar.textContent = '⚠ ' + ma.type;
+  } else {
+    bar.className = 'alarm-none';
+    bar.textContent = 'NO ALARMS';
+  }
+}
+
+/* ============================================================
+   RENDER — TEST VIEW
+============================================================ */
+function renderTest() {
+  const p = state.params;
+  setText('t-flow',  p.flow.toFixed(1));
+  setText('t-rpm',   p.rpm);
+  setText('t-pven',  p.inletPressure);
+  setText('t-part',  p.outletPressure);
+  setText('t-svo2',  p.svO2);
+  setText('t-sweep', p.sweepGas.toFixed(1));
+  const tb = document.getElementById('t-alarm-box');
+  if (p.alarm) {
+    tb.style.display = 'block';
+    tb.textContent = '⚠ ALARM: ' + (alarmLabels[p.alarm] || p.alarm);
+  } else {
+    tb.style.display = 'none';
+  }
+}
+
+/* ============================================================
+   RENDER ALL
+============================================================ */
+function renderAll() {
+  // Apply variation to params
+  if (state.autoVariation) {
+    const b = state.base;
+    const phys = patientPhysiology;
+    const variedFlow  = Math.max(0.5, Math.min(7.0, b.flow + (Math.random()-0.5)*0.6));
+    const variedInlet = Math.round(Math.max(-200, Math.min(-20, b.inletPressure + (Math.random()-0.5)*20)));
+    const variedOutlet= Math.round(Math.max(200,  Math.min(600, b.outletPressure + (Math.random()-0.5)*15)));
+    const variedDeltaP= Math.round(Math.max(20,   Math.min(200, b.deltaP + (Math.random()-0.5)*5)));
+    const nativeCO = calcNativeCO(variedFlow, phys);
+    const totalCO  = nativeCO + variedFlow;
+    const bp       = calcActualBP(totalCO, phys.svr, nativeCO);
+    const spO2     = calcCombinedSpO2(variedFlow, totalCO, phys, b.fdO2);
+    const hr       = applyRhythmHR(calcHR(totalCO, bp, phys), state.selectedRhythm);
+    let rr = phys.respiratoryRate;
+    if (spO2 < 88) rr += Math.round((88-spO2)*0.8);
+    if (bp.map < 60) rr += 6;
+    rr = Math.max(8, Math.min(35, rr));
+    const cvp = Math.round(Math.max(0, Math.min(20, 8 + phys.volumeStatus*4 + (variedInlet+45)/10)));
+    state.params = {
+      ...b,
+      flow: variedFlow, inletPressure: variedInlet, outletPressure: variedOutlet,
+      deltaP: variedDeltaP, temperature: b.temperature + (Math.random()-0.5)*0.1,
+      pfh: calcPFH(variedFlow, variedDeltaP, b.rpm),
+      icuHR: hr, icuSysBP: bp.sysBP, icuDiaBP: bp.diaBP,
+      icuMAP: bp.map, icuSpO2: spO2, icuRR: rr, icuCVP: cvp
+    };
+  } else {
+    state.params = { ...state.base };
+  }
+  renderDisplay();
+  renderControl();
+  renderMonitor();
+  renderTest();
+}
+
+/* ============================================================
+   WAVEFORM GENERATORS
+============================================================ */
+function generateECGPoints(offset, hr, rhythm, width=600, height=80) {
+  const pts = [];
+  const baseline = height / 2;
+  const bpm = Math.max(1, hr);
+  const beatDuration = (60/bpm) * 50;
+
+  for (let x = 0; x < width; x++) {
+    const beatPhase = (x + offset) % beatDuration;
+    const phase = beatPhase / beatDuration;
+    let y = baseline;
+
+    switch(rhythm) {
+      case 'NSR': default: {
+        if (phase < 0.15) { y = baseline - Math.sin((phase/0.15)*Math.PI*2)*3; }
+        else if (phase >= 0.25 && phase < 0.35) {
+          const q=(phase-0.25)/0.10;
+          y = q<0.2?baseline+2:q<0.6?baseline-25:baseline+3;
+        }
+        else if (phase >= 0.45 && phase < 0.70) { y = baseline-Math.sin(((phase-0.45)/0.25)*Math.PI)*8; }
+        break; }
+      case 'SinusBrady': case 'SinusTachy': {
+        if (phase < 0.12) { y = baseline - Math.sin((phase/0.12)*Math.PI*2)*3; }
+        else if (phase >= 0.22 && phase < 0.32) {
+          const q=(phase-0.22)/0.10;
+          y = q<0.2?baseline+2:q<0.6?baseline-25:baseline+3;
+        }
+        else if (phase >= 0.42 && phase < 0.65) { y = baseline-Math.sin(((phase-0.42)/0.23)*Math.PI)*8; }
+        break; }
+      case 'AFib': {
+        const fibWaves = Math.sin((x+offset)*0.4)*2 + Math.sin((x+offset)*0.7)*1.5;
+        y = baseline + fibWaves;
+        if (phase >= 0.25 && phase < 0.35) {
+          const q=(phase-0.25)/0.10;
+          y = q<0.2?baseline+2:q<0.6?baseline-25:baseline+3;
+        }
+        else if (phase >= 0.40 && phase < 0.65) { y = baseline - Math.sin(((phase-0.40)/0.25)*Math.PI)*7 + fibWaves*0.3; }
+        break; }
+      case 'VTach': {
+        const vtd = (60/150)*50;
+        const vp = ((x+offset)%vtd)/vtd;
+        if (vp>=0.15 && vp<0.45) {
+          const q=(vp-0.15)/0.30;
+          y = q<0.3?baseline+8:q<0.7?baseline-30:baseline+10;
+        }
+        else if (vp>=0.50 && vp<0.85) { y = baseline+Math.sin(((vp-0.50)/0.35)*Math.PI)*12; }
+        break; }
+      case 'VFib': {
+        y = baseline + Math.sin((x+offset)*0.8)*15 + Math.sin((x+offset)*1.3)*10 + Math.sin((x+offset)*0.5)*8;
+        break; }
+      case 'Asystole': { y = baseline; break; }
+      case 'AFlutter': {
+        const flutterCycle=15;
+        const fp=((x+offset)%flutterCycle)/flutterCycle;
+        const fw = fp<0.3?-6*(fp/0.3):-6+6*((fp-0.3)/0.7);
+        y = baseline + fw;
+        if (phase>=0.25 && phase<0.35) {
+          const q=(phase-0.25)/0.10;
+          y = q<0.2?baseline+2:q<0.6?baseline-25:baseline+3;
+        }
+        else if (phase>=0.45 && phase<0.70) { y = baseline-Math.sin(((phase-0.45)/0.25)*Math.PI)*8+fw*0.5; }
+        break; }
+      case '1stAVB': {
+        if (phase<0.12) { y=baseline-Math.sin((phase/0.12)*Math.PI*2)*3; }
+        else if (phase>=0.35 && phase<0.45) {
+          const q=(phase-0.35)/0.10;
+          y = q<0.2?baseline+2:q<0.6?baseline-25:baseline+3;
+        }
+        else if (phase>=0.55 && phase<0.80) { y=baseline-Math.sin(((phase-0.55)/0.25)*Math.PI)*8; }
+        break; }
+      case '2ndAVB1': {
+        const beatNum=Math.floor((x+offset)/beatDuration);
+        const cyclePos=beatNum%4;
+        const drop=(cyclePos===3);
+        const pr=[0.20,0.28,0.35,0.20][cyclePos];
+        if (phase<0.15) { y=baseline-Math.sin((phase/0.15)*Math.PI*2)*3; }
+        else if (!drop && phase>=pr && phase<pr+0.10) {
+          const q=(phase-pr)/0.10;
+          y = q<0.2?baseline+2:q<0.6?baseline-25:baseline+3;
+        }
+        else if (!drop && phase>=pr+0.20 && phase<pr+0.45) { y=baseline-Math.sin(((phase-(pr+0.20))/0.25)*Math.PI)*8; }
+        break; }
+      case '2ndAVB2': {
+        const bn2=Math.floor((x+offset)/beatDuration);
+        const drop2=(bn2%3===2); const pr2=0.22;
+        if (phase<0.15) { y=baseline-Math.sin((phase/0.15)*Math.PI*2)*3; }
+        else if (!drop2 && phase>=pr2 && phase<pr2+0.10) {
+          const q=(phase-pr2)/0.10;
+          y = q<0.2?baseline+2:q<0.6?baseline-25:baseline+3;
+        }
+        else if (!drop2 && phase>=pr2+0.20 && phase<pr2+0.45) { y=baseline-Math.sin(((phase-(pr2+0.20))/0.25)*Math.PI)*8; }
+        break; }
+      case '3rdAVB': {
+        const pBeat=(60/75)*50;
+        const qrsBeat=(60/40)*50;
+        const pPh=((x+offset)%pBeat)/pBeat;
+        const qrsPh=((x+offset)%qrsBeat)/qrsBeat;
+        if (pPh<0.15) { y=baseline-Math.sin((pPh/0.15)*Math.PI*2)*3; }
+        if (qrsPh>=0.25 && qrsPh<0.40) {
+          const q=(qrsPh-0.25)/0.15;
+          y = q<0.2?baseline+3:q<0.6?baseline-30:baseline+4;
+        }
+        else if (qrsPh>=0.50 && qrsPh<0.75) { y=baseline-Math.sin(((qrsPh-0.50)/0.25)*Math.PI)*10; }
+        break; }
+    }
+    pts.push(`${x},${Math.max(2, Math.min(height-2, y))}`);
+  }
+  return pts.join(' ');
+}
+
+function generateABPPoints(offset, sys, dia, hr, rhythm) {
+  const pts=[]; const width=600; const height=80;
+  const baseline=height-10;
+  if (rhythm==='VFib'||rhythm==='Asystole') {
+    for(let x=0;x<width;x++) {
+      const c=rhythm==='VFib'?Math.sin((x+offset)*0.5)*2:0;
+      pts.push(`${x},${Math.max(5,Math.min(height-5,baseline-(20*0.3)+c))}`);
+    } return pts.join(' ');
+  }
+  let eSys=sys, eDia=dia;
+  if (rhythm==='VTach') eSys=dia+(sys-dia)*0.5;
+  const bpm=Math.max(1,hr);
+  const beatDur=(60/bpm)*50;
+  const scale=(height-20)/120;
+  const breathCycle=(60/16)*100;
+  for(let x=0;x<width;x++) {
+    const phase=((x+offset)%beatDur)/beatDur;
+    const resp=Math.sin(((x+offset)%breathCycle)/breathCycle*Math.PI*2)*4;
+    const beat=Math.floor((x+offset)/beatDur);
+    const bv=(Math.sin(beat*1.7)*0.5+Math.sin(beat*3.1)*0.3)*2;
+    let p=eDia+resp+bv;
+    const pr=eSys-eDia;
+    if(phase>=0.25&&phase<0.28){p=eDia+(pr*Math.pow((phase-0.25)/0.03,0.8))+resp+bv;}
+    else if(phase>=0.28&&phase<0.31){p=eSys+resp+bv;}
+    else if(phase>=0.31&&phase<0.34){const n=(phase-0.31)/0.03;p=n<0.5?eSys-(pr*0.25*n)+resp+bv:eSys-(pr*0.125)+(pr*0.05*(n-0.5))+resp+bv;}
+    else if(phase>=0.34){const d=(phase-0.34)/0.66;p=eDia+(eSys-pr*0.075-eDia)*Math.exp(-3*d)+resp+bv;}
+    pts.push(`${x},${Math.max(5,Math.min(height-5,baseline-p*scale))}`);
+  }
+  return pts.join(' ');
+}
+
+function generateSpO2Points(offset, hr, rhythm) {
+  const pts=[]; const width=600; const height=80;
+  if (rhythm==='VFib'||rhythm==='Asystole') {
+    for(let x=0;x<width;x++) pts.push(`${x},${height/2}`);
+    return pts.join(' ');
+  }
+  const beatDur=(60/Math.max(1,hr))*50;
+  for(let x=0;x<width;x++) {
+    const phase=((x+offset)%beatDur)/beatDur;
+    let y=height/2;
+    if(phase>=0&&phase<0.40){y=(height/2)-Math.sin((phase/0.40)*Math.PI)*22;}
+    pts.push(`${x},${Math.max(2,Math.min(height-2,y))}`);
+  }
+  return pts.join(' ');
+}
+
+function generateCVPPoints(offset, cvp, hr, rhythm) {
+  const pts=[]; const width=600; const height=80;
+  const bpm=Math.max(1,hr);
+  const beatDur=(60/bpm)*50;
+  const scale=(height-20)/20;
+  const baseY=(height/2)-(cvp*scale);
+  for(let x=0;x<width;x++) {
+    const phase=((x+offset)%beatDur)/beatDur;
+    let wh=0;
+    if(rhythm!=='AFib') {
+      if(phase>=0.05&&phase<0.12){const a=(phase-0.05)/0.07;wh=a<0.5?(a/0.5)*4:4-(((a-0.5)/0.5)*4);}
+    }
+    if(phase>=0.25&&phase<0.30){const c=(phase-0.25)/0.05;wh=c<0.5?(c/0.5)*2:2-(((c-0.5)/0.5)*2);}
+    if(phase>=0.50&&phase<0.65){const v=(phase-0.50)/0.15;wh=v<0.5?(v/0.5)*5:5-(((v-0.5)/0.5)*5);}
+    pts.push(`${x},${Math.max(2,Math.min(height-2,baseY-wh*scale))}`);
+  }
+  return pts.join(' ');
+}
+
+function generatePAPoints(offset, sys, dia, hr) {
+  const pts=[]; const width=600; const height=80;
+  const bpm=Math.max(1,hr);
+  const beatDur=(60/bpm)*50;
+  const range=sys-dia; const scale=(height-20)/60;
+  const baseY=(height-10)-(dia*scale);
+  for(let x=0;x<width;x++) {
+    const phase=((x+offset)%beatDur)/beatDur;
+    let p=dia;
+    if(phase>=0.10&&phase<0.25){p=dia+range*Math.sin(((phase-0.10)/0.15)*(Math.PI/2));}
+    else if(phase>=0.25&&phase<0.40){const d=(phase-0.25)/0.15;p=sys-(range*0.2)*d;}
+    else if(phase>=0.40&&phase<0.55){p=sys-(range*0.2)+(range*0.15)*Math.sin(((phase-0.40)/0.15)*Math.PI);}
+    else if(phase>=0.55){const d=(phase-0.55)/0.45;p=dia+(sys-range*0.1-dia)*Math.exp(-2*d);}
+    pts.push(`${x},${Math.max(2,Math.min(height-2,(height-10)-p*scale))}`);
+  }
+  return pts.join(' ');
+}
+
+function generateRespPoints(offset, rr) {
+  const pts=[]; const width=600;
+  const breathInterval=(60/Math.max(1,rr))*100;
+  for(let x=0;x<width;x++) {
+    const pos=(x+offset*0.3)%breathInterval;
+    const y=40-Math.sin((pos/breathInterval)*2*Math.PI)*20;
+    pts.push(`${x},${Math.max(2,Math.min(78,y))}`);
+  }
+  return pts.join(' ');
+}
+
+/* ============================================================
+   WAVEFORM RENDER LOOP
+============================================================ */
+function renderWaveforms() {
+  const p = state.params;
+  const f = state.vitalFluctuation;
+  const hr  = Math.max(1, p.icuHR + f.hrOffset);
+  const sys = p.icuSysBP + f.sysOffset;
+  const dia = p.icuDiaBP + f.diaOffset;
+  const cvp = Math.max(0, p.icuCVP + f.cvpOffset);
+  const rr  = Math.max(1, p.icuRR + f.rrOffset);
+  const off = state.waveOffset;
+  const rhythm = state.selectedRhythm;
+
+  // Full monitor waves
+  setPoints('ecg-wave',  generateECGPoints(off, hr, rhythm));
+  setPoints('abp-wave',  generateABPPoints(off, sys, dia, hr, rhythm));
+  setPoints('spo2-wave', generateSpO2Points(off, hr, rhythm));
+  setPoints('cvp-wave',  generateCVPPoints(off, cvp, hr, rhythm));
+  setPoints('pa-wave',   generatePAPoints(off, 25 + f.paOffset, 10 + Math.round(f.paOffset/2), hr));
+  setPoints('resp-wave', generateRespPoints(off, rr));
+  // Test mode waves
+  setPoints('tecg-wave',  generateECGPoints(off, hr, rhythm));
+  setPoints('tabp-wave',  generateABPPoints(off, sys, dia, hr, rhythm));
+  setPoints('tspo2-wave', generateSpO2Points(off, hr, rhythm));
+}
+
+function buildGridLines(containerId, hColor, vColor) {
+  const g = document.getElementById(containerId);
+  if (!g) return;
+  let html = '';
+  for(let i=0;i<12;i++) html += `<line x1="${i*50}" y1="0" x2="${i*50}" y2="80" stroke="${hColor||'rgba(40,80,40,.3)'}" stroke-width=".5"/>`;
+  for(let i=0;i<5;i++) html += `<line x1="0" y1="${i*20}" x2="600" y2="${i*20}" stroke="${vColor||'rgba(40,80,40,.3)'}" stroke-width=".5"/>`;
+  g.innerHTML = html;
+}
+
+/* ============================================================
+   FLUCTUATION TIMER
+============================================================ */
+function tickFluctuation() {
+  if (!state.autoVariation) {
+    state.vitalFluctuation = {hrOffset:0,sysOffset:0,diaOffset:0,spo2Offset:0,rrOffset:0,cvpOffset:0,paOffset:0};
+    return;
+  }
+  const f = state.vitalFluctuation;
+  state.vitalFluctuation = {
+    hrOffset:  Math.max(-5, Math.min(5, f.hrOffset  + (Math.random()-0.5)*2)),
+    sysOffset: Math.max(-8, Math.min(8, f.sysOffset + (Math.random()-0.5)*4)),
+    diaOffset: Math.max(-5, Math.min(5, f.diaOffset + (Math.random()-0.5)*3)),
+    spo2Offset:Math.max(-2, Math.min(2, f.spo2Offset+ (Math.random()-0.5))),
+    rrOffset:  Math.max(-2, Math.min(2, f.rrOffset  + (Math.random()-0.5))),
+    cvpOffset: Math.max(-2, Math.min(2, f.cvpOffset + (Math.random()-0.5))),
+    paOffset:  Math.max(-3, Math.min(3, f.paOffset  + (Math.random()-0.5)*2))
+  };
+}
+
+/* ============================================================
+   ICU ALARM DETECTION
+============================================================ */
+function checkMonitorAlarms() {
+  if (state.alarmSilenced) return;
+  const p = state.params;
+  const f = state.vitalFluctuation;
+  const hr  = p.icuHR + f.hrOffset;
+  const sys = p.icuSysBP + f.sysOffset;
+  const spo2= p.icuSpO2 + f.spo2Offset;
+  const r = state.selectedRhythm;
+  let ma = { active: false, type: '', priority: 'low' };
+  if (r==='VFib')    ma = { active:true, type:'VENTRICULAR FIBRILLATION', priority:'high'};
+  else if (r==='Asystole') ma = { active:true, type:'ASYSTOLE', priority:'high'};
+  else if (r==='VTach'&&hr>150) ma = { active:true, type:'VENTRICULAR TACHYCARDIA', priority:'high'};
+  else if (spo2<85)  ma = { active:true, type:'CRITICAL SpO₂', priority:'high'};
+  else if (hr>130||hr<50) ma = { active:true, type:hr>130?'TACHYCARDIA':'BRADYCARDIA', priority:'medium'};
+  else if (sys>180||sys<80) ma = { active:true, type:sys>180?'HYPERTENSION':'HYPOTENSION', priority:'medium'};
+  else if (spo2>=85&&spo2<90) ma = { active:true, type:'LOW SpO₂', priority:'medium'};
+  else if ((hr>=110&&hr<=130)||(hr>=50&&hr<60)) ma = { active:true, type:'HR BORDERLINE', priority:'low'};
+  state.monitorAlarmState = ma;
+  renderMonitorAlarm();
+}
+
+/* ============================================================
+   UTILS
+============================================================ */
+function setText(id, val) { const el=document.getElementById(id); if(el) el.textContent=val; }
+function setPoints(id, pts) { const el=document.getElementById(id); if(el) el.setAttribute('points',pts); }
+function toggleClass(id, cls, cond) { const el=document.getElementById(id); if(!el) return; el.classList.toggle(cls, cond); }
+
+/* ============================================================
+   INIT — build dynamic content
+============================================================ */
+function buildScenarioButtons() {
+  const containers = ['scenario-btns','split-scenario-btns'];
+  containers.forEach(cid => {
+    const container = document.getElementById(cid);
+    if (!container) return;
+    container.innerHTML = '';
+    presetScenarios.forEach((s, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'scenario-btn';
+      btn.textContent = s.name;
+      btn.onclick = () => applyPreset(s);
+      container.appendChild(btn);
+    });
+  });
+}
+
+function buildGrids() {
+  const grids = [
+    ['ecg-grid','rgba(20,60,20,.3)'],
+    ['abp-grid','rgba(60,20,20,.3)'],
+    ['spo2-grid','rgba(20,40,60,.3)'],
+    ['cvp-grid','rgba(60,20,60,.3)'],
+    ['pa-grid','rgba(60,50,20,.3)'],
+    ['resp-grid','rgba(60,60,20,.3)']
+  ];
+  grids.forEach(([id,col]) => buildGridLines(id, col, col));
+}
+
+function init() {
+  buildScenarioButtons();
+  buildGrids();
+  setView('display');
+
+  // Auto-variation tick (800ms)
+  setInterval(() => {
+    tickFluctuation();
+    renderAll();
+    checkMonitorAlarms();
+  }, 800);
+
+  // Waveform animation (50ms)
+  setInterval(() => {
+    state.waveOffset = (state.waveOffset + 2) % 600;
+    renderWaveforms();
+  }, 50);
+
+  // Clock tick
+  setInterval(() => {
+    setText('display-time', new Date().toLocaleTimeString('en-US',{hour12:false}));
+    setText('monitor-clock', new Date().toLocaleTimeString('en-US',{hour12:false}));
+  }, 1000);
+
+  renderAll();
+  renderWaveforms();
+}
+
+init();
+</script>
+</body>
+</html>
